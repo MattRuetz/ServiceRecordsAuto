@@ -1,0 +1,239 @@
+
+
+Sub autoMailer_NEW()
+
+    toLine = getContactList
+    t = Mail_Selection_Range_Outlook_Body(toLine, 1)
+    
+End Sub
+
+
+Sub autoMailer_PENDING()
+
+    toLine = getContactList
+    t = Mail_Selection_Range_Outlook_Body(toLine, 2)
+    
+End Sub
+
+
+Function getContactList() As String
+
+    Dim contactString
+
+    Select Case ActiveSheet.Name
+    
+        Case "ELITE Service Record"
+        
+            contactString = buildContactList("G")
+        
+        Case "Peterbilt Service Record"
+        
+            contactString = buildContactList("H")
+        
+        Case "Kenworth Service Record"
+        
+            contactString = buildContactList("I")
+        
+        Case Else
+            t = MsgBox("Unable to mail! Please remain on the sheet you wish to send while running Auto-Mail.", vbCritical, "Unable to Send!")
+    
+    End Select
+    
+    getContactList = contactString
+
+End Function
+
+
+Function buildContactList(col) As String
+
+    curRow = 2
+
+    Dim contactListString
+    contactListString = ""
+
+    ' Iterate doen list, adding each contact to semi-sep string
+    Do While Not IsEmpty(Worksheets("UnitNums").Range(col & curRow))
+        contactListString = contactListString & Worksheets("UnitNums").Range(col & curRow).Value & ";"
+        curRow = curRow + 1
+    Loop
+    
+    buildContactList = contactListString
+
+End Function
+
+
+' snagged from https://www.rondebruin.nl/win/s1/outlook/bmail2.htm
+Function Mail_Selection_Range_Outlook_Body(recips, newOrPending)
+
+    Dim MySel As Range
+    
+    curRow = 16 ' start at first defect in table
+    
+    Do While Not IsEmpty(Range("B" & curRow))
+        
+        curRow = curRow + 1
+    Loop
+    
+    Dim rngMailCheck As Range
+    Set rngMailCheck = Range("M16:M" & curRow)
+    
+    Dim rowNumbersOfSent(30) As Integer
+    Dim i
+    i = 0
+    
+
+    For Each cell In rngMailCheck
+        ' If designated for sending for the first time, and the MAIL button (not pending) was pressed
+        If cell.Value = "ADD TO EMAIL" And newOrPending = 1 Then
+            ' Add the designated items to the range to copy to email
+            If MySel Is Nothing Then
+                Set MySel = Range("B" & cell.Row & ":E" & cell.Row)
+            Else
+                Set MySel = Union(MySel, Range("B" & cell.Row & ":E" & cell.Row))
+            End If
+            
+            rowNumbersOfSent(i) = cell.Row
+            i = i + 1
+            
+        ' If designated for sending again, and the MAIL PENDING button was pressed
+        ElseIf cell.Value = "WAITING FOR RESPONSE" And newOrPending = 2 Then
+        
+            If MySel Is Nothing Then
+                Set MySel = Range("B" & cell.Row & ":E" & cell.Row)
+            Else
+                Set MySel = Union(MySel, Range("B" & cell.Row & ":E" & cell.Row))
+            End If
+        End If
+        
+    Next cell
+    
+    ' alert if no items are designated to send
+    If MySel Is Nothing And newOrPending = 1 Then
+        t = MsgBox("Please designate which defects to add to the email!" & vbNewLine & vbNewLine & _
+        "Select 'ADD TO EMAIL' in column M for items you wish to send.", vbCritical + vbOKOnly, "No items to send!")
+    ElseIf MySel Is Nothing Then
+        t = MsgBox("Please designate which defects to add to the email!" & vbNewLine & vbNewLine & _
+        "Select 'WAITING FOR RESPONSE' in column M for items you wish to send.", vbCritical + vbOKOnly, "No items to send!")
+    Else
+        ' Add the column titles to the range to send
+        Set MySel = Union(MySel, Range("B15:E15"))
+    End If
+
+    Dim rng As Range
+    Dim OutApp As Object
+    Dim OutMail As Object
+
+    Set rng = Nothing
+    On Error Resume Next
+    'Only the visible cells in the selection
+    Set rng = MySel.SpecialCells(xlCellTypeVisible)
+    On Error GoTo 0
+
+    If rng Is Nothing Then
+        Exit Function
+    End If
+
+    With Application
+        .EnableEvents = False
+        .ScreenUpdating = False
+    End With
+
+    Set OutApp = CreateObject("Outlook.Application")
+    Set OutMail = OutApp.CreateItem(0)
+
+    On Error Resume Next
+    With OutMail
+        .To = recips
+        .CC = ""
+        .BCC = ""
+        .Subject = "Sleeman Maintenance Request"
+        .HTMLBody = RangetoHTML(rng)
+        .Display  'or use .Display
+    End With
+    On Error GoTo 0
+    
+    If newOrPending = 1 Then
+        resp = MsgBox("Would you like to designate all sent items as 'WAITING FOR RESPONSE'?", vbQuestion + vbYesNo, "Change designation?")
+        
+        If resp = vbYes Then
+            j = 0
+            Do While j < i
+                Range("M" & rowNumbersOfSent(j)).Value = "WAITING FOR RESPONSE"
+                j = j + 1
+            Loop
+        End If
+    End If
+
+    With Application
+        .EnableEvents = True
+        .ScreenUpdating = True
+    End With
+
+    Set OutMail = Nothing
+    Set OutApp = Nothing
+    
+End Function
+
+
+' This function converts the range of cells to be sent into HTML to keep formatting
+Function RangetoHTML(rng As Range)
+    Dim fso As Object
+    Dim ts As Object
+    Dim TempFile As String
+    Dim TempWB As Workbook
+
+    TempFile = Environ$("temp") & "\" & Format(Now, "dd-mm-yy h-mm-ss") & ".htm"
+
+    'Copy the range and create a new workbook to past the data in
+    rng.Copy
+    Set TempWB = Workbooks.Add(1)
+    With TempWB.Sheets(1)
+        .Cells(1).PasteSpecial Paste:=8
+        .Cells(1).PasteSpecial xlPasteValues, , False, False
+        .Cells(1).PasteSpecial xlPasteFormats, , False, False
+        .Cells(1).Select
+        Application.CutCopyMode = False
+        On Error Resume Next
+        .DrawingObjects.Visible = True
+        .DrawingObjects.Delete
+        On Error GoTo 0
+    End With
+
+    'Publish the sheet to a html file
+    With TempWB.PublishObjects.Add( _
+         SourceType:=xlSourceRange, _
+         Filename:=TempFile, _
+         Sheet:=TempWB.Sheets(1).Name, _
+         Source:=TempWB.Sheets(1).UsedRange.Address, _
+         HtmlType:=xlHtmlStatic)
+        .Publish (True)
+    End With
+
+    'Read all data from the html file into RangetoHTML
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set ts = fso.GetFile(TempFile).OpenAsTextStream(1, -2)
+    RangetoHTML = ts.readall
+    ts.Close
+    RangetoHTML = Replace(RangetoHTML, "align=center x:publishsource=", _
+                          "align=left x:publishsource=")
+
+    'Close TempWB
+    TempWB.Close savechanges:=False
+
+    Kill TempFile
+
+    Set ts = Nothing
+    Set fso = Nothing
+    Set TempWB = Nothing
+End Function
+ 
+
+
+
+
+
+
+
+
+
+

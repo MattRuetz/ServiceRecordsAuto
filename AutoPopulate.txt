@@ -1,0 +1,420 @@
+Public Type Defect
+    isTractor As Boolean
+    trailerNum As String
+    unitNum As String
+    defectType As String
+    remark As String
+    isMajor As Boolean
+    
+End Type
+
+Public Type DefectEmail
+    dateInitiated As Date
+    numDefects As Integer
+    defectList(10) As Defect
+End Type
+
+Public firstBlankRow
+
+Public Sub populateFromMail(Optional fromDate As Date)
+
+    ' --- Gets the name of the folder to search, between [ ] in cell D5 ---------
+    FolderName = getScanFolderName
+    ' ---------------------------------------------------------------------------
+    
+    ' --- Gets the name of the destination folder, between [ ] in cell D6 ---------
+    DestinationFolderName = getDestFolderName
+    ' ---------------------------------------------------------------------------
+    
+    Dim keepScanned As Boolean
+    copyScanned = False
+    
+    Dim addedToThisList As Integer
+    addedToThisList = 0
+
+    Dim OutlookApp As Outlook.Application
+    Dim OutlookNamespace As Namespace
+    Dim Folder As MAPIFolder
+    Dim finFolder As MAPIFolder
+    
+    Dim OutlookMail As Variant
+    
+    Set OutlookApp = New Outlook.Application
+    Set OutlookNamespace = OutlookApp.GetNamespace("MAPI")
+    Set Folder = OutlookNamespace.GetDefaultFolder(olFolderInbox).Folders(FolderName)
+    
+    If DestinationFolderName <> "" Then
+        copyScanned = True
+        Set finFolder = OutlookNamespace.GetDefaultFolder(olFolderInbox).Folders(DestinationFolderName)
+    End If
+        
+    
+    If InStr(fromDate, " ") = 0 Then
+        ' If no time is given in the most recent date in sheet,
+        ' set the time to 12pm (noon) for date comparison to work
+        fromDate = fromDate & " 12:00:01 AM"
+    End If
+    
+    numScanned = 0
+    numNewWithDefects = 0
+       
+    For Each OutlookMail In Folder.Items
+        Dim dateRec As Date
+        dateRec = OutlookMail.ReceivedTime
+        
+        If dateRec > fromDate Then
+        
+            ' first get tractor number from SUBJECT line to see if it is Elite repair
+            emailSubject = OutlookMail.Subject
+            tractorNum = getTractorNumber(emailSubject)
+            
+            ' Collect other relevant data from raw email
+            EmailSender = OutlookMail.SenderName
+            EmailBody = OutlookMail.Body
+            
+            ' If this email contains a defect...
+            If InStr(EmailBody, "Defect Found?: Yes") Then
+            
+                OutlookMail.PrintOut
+            
+                Dim currentDefectEmail As DefectEmail ' declare new DefectEmail struct
+                
+                currentDefectEmail.dateInitiated = dateRec ' set recievedDate
+                
+                numNewWithDefects = numNewWithDefects + 1
+                
+                numDefects = getDefects(currentDefectEmail, EmailBody, emailSubject, tractorNum)
+                
+                addedToThisList = addedToThisList + addDefectsToList(currentDefectEmail) ' Add all defects from this email to the list!
+
+            End If
+            
+        End If
+        
+        ' If a destination folder was given, move the email to that folder
+        numScanned = numScanned + 1
+        
+    Next OutlookMail
+    
+    ActiveSheet.Range("$B$43:$N$374").AutoFilter Field:=11, Criteria1:="="
+    
+    If numNewWithDefects = 0 Then
+        MsgBox ("This list is already up to date!" & Chr(10) & "Scanned " & numScanned & " Emails, 0 defects found!")
+    Else
+        MsgBox ("Scanned " & numScanned & " Emails, " & numNewWithDefects & " defects found SINCE " & fromDate & Chr(10) & _
+        addedToThisList & " defects added to this list (Pink indicator)")
+    End If
+    
+    If copyScanned And numScanned > 0 Then
+        clearPr = MsgBox("If you are finished updating ALL lists, move all maintenance emails from: " & Chr(10) & Chr(10) & "     '" & FolderName & "' -----> '" & DestinationFolderName & "'" & Chr(10) & Chr(10) & " by pressing the 'CLEAR SCAN FOLDER' button on any sheet!", vbOKOnly, "Clear Source Folder?")
+        ' If user selects yes, all items are deleted from the source folder
+    End If
+
+    Set Folder = Nothing
+    Set OutlookNamespace = Nothing
+    Set OutlookApp = Nothing
+
+End Sub
+
+
+Function getDefects(ByRef defEmail As DefectEmail, ByVal EmailBody As String, ByVal emailSubject As String, ByVal tractorNum As String)
+
+
+    lineSplit = Split(EmailBody, vbNewLine)
+    
+    numItems = UBound(lineSplit) - LBound(lineSplit)
+    
+    Dim i
+    i = 7
+    
+    curItem = lineSplit(i)
+    
+    Dim numDefects As Integer
+    defectIndex = 0 ' index of the current defect in the email's defectList
+    
+    Dim curDefect As Defect
+    
+    
+    
+    Do While curItem <> "" And curItem <> " "
+    
+        ' MsgBox ("CUR: " & curItem)
+    
+        Dim itemAndVal
+        
+        itemAndVal = Split(curItem, ": ") ' split line at colon[space]
+        
+        Select Case itemAndVal(0)
+            
+            Case "Trailer #"
+                defEmail.defectList(defectIndex).trailerNum = itemAndVal(1)
+                
+            Case "Tractor Defect?"
+                If itemAndVal(1) = "Yes" Then
+                    ' This is a tractor defect
+                    defEmail.defectList(defectIndex).isTractor = True
+                    defEmail.defectList(defectIndex).unitNum = tractorNum
+                Else
+                    defEmail.defectList(defectIndex).isTractor = False
+                End If
+            
+            Case "Tractor Defect Details?"
+                defEmail.defectList(defectIndex).defectType = itemAndVal(1)
+            
+            Case "Trailer Defect Details?"
+                defEmail.defectList(defectIndex).defectType = itemAndVal(1)
+            
+            Case "Remarks"
+                defEmail.defectList(defectIndex).remark = itemAndVal(1)
+                
+            Case "major or minor defect?"
+                If itemAndVal(1) = "major" Then
+                    defEmail.defectList(defectIndex).isMajor = True
+                Else
+                    defEmail.defectList(defectIndex).isMajor = False
+                End If
+                
+            Case "More Tractor Defects?"
+                If itemAndVal(1) = "Yes" Then
+                    defectIndex = defectIndex + 1
+                    defEmail.defectList(defectIndex).isTractor = True
+                    defEmail.defectList(defectIndex).unitNum = defEmail.defectList(0).unitNum
+                End If
+                
+            Case "More Trailer Defects?"
+                If itemAndVal(1) = "Yes" Then
+                    defectIndex = defectIndex + 1
+                    defEmail.defectList(defectIndex).isTractor = False
+                    defEmail.defectList(defectIndex).trailerNum = defEmail.defectList(0).trailerNum
+                End If
+            
+            Case Else
+                
+            
+        End Select
+
+        i = i + 1
+        curItem = lineSplit(i)
+    Loop
+    
+    defEmail.numDefects = defectIndex + 1
+
+End Function
+
+
+Function getTractorNumber(ByVal emailSubject) As String
+    
+    tractorNumApprox = Mid(emailSubject, 22, 10)
+    tractorNum = Split(tractorNumApprox, " ")
+
+    getTractorNumber = tractorNum(0)
+    
+
+End Function
+
+
+Function isPeterbilt(defectToCheck As Defect) As Boolean
+
+    If isElite(defectToCheck) Or isKenworth(defectToCheck) Then
+        isPeterbilt = False
+    Else
+        isPeterbilt = True
+    End If
+
+End Function
+
+
+Function isElite(defectToCheck As Defect) As Boolean
+
+    If defectToCheck.isTractor = False Then
+        isElite = True
+        Exit Function
+    Else
+        
+        curUnitNumRow = 2
+        
+        curUnitNum = Sheets("UnitNums").Range("A" & curUnitNumRow).Value
+        
+        Do While Not IsEmpty(Sheets("UnitNums").Range("A" & curUnitNumRow))
+        
+            If defectToCheck.unitNum = curUnitNum Then
+                isElite = True
+                Exit Function
+            End If
+        
+            curUnitNumRow = curUnitNumRow + 1
+            
+            curUnitNum = Sheets("UnitNums").Range("A" & curUnitNumRow).Value
+        Loop
+    
+    End If
+
+    isElite = False
+End Function
+
+
+Function isKenworth(defectToCheck As Defect) As Boolean
+
+    If defectToCheck.isTractor = False Then
+        isKenworth = False
+        Exit Function
+    Else
+        
+        curUnitNumRow = 2
+        
+        curUnitNum = Sheets("UnitNums").Range("C" & curUnitNumRow).Value
+        
+        Do While Not IsEmpty(Sheets("UnitNums").Range("C" & curUnitNumRow))
+        
+            If defectToCheck.unitNum = curUnitNum Then
+                isKenworth = True
+                Exit Function
+            End If
+        
+            curUnitNumRow = curUnitNumRow + 1
+            
+            curUnitNum = Sheets("UnitNums").Range("C" & curUnitNumRow).Value
+        Loop
+    
+    End If
+
+    isKenworth = False
+End Function
+
+
+Function addDefectsToList(ByRef defEmail As DefectEmail)
+
+    remainingDefects = defEmail.numDefects
+    defectsAdded = 0
+    
+    Do While remainingDefects > 0
+
+        curDef = remainingDefects - 1
+        
+        If (ActiveSheet.Name = "ELITE Service Record" And isElite(defEmail.defectList(curDef))) _
+            Or (ActiveSheet.Name = "Kenworth Service Record" And isKenworth(defEmail.defectList(curDef))) _
+            Or (ActiveSheet.Name = "Peterbilt Service Record" And isPeterbilt(defEmail.defectList(curDef))) Then
+        
+            Rows(firstBlankRow & ":" & firstBlankRow + 1).FillDown
+            
+            ' A colored indicator at the start of the row to show it was auto-added
+            Range("A" & firstBlankRow).Select
+            Range("A" & firstBlankRow).Interior.ColorIndex = 7
+        
+            ' Fill in unit num / truck or trailer (1825 TRUCK, etc..)
+            If ActiveSheet.Name = "ELITE Service Record" Then
+                If defEmail.defectList(curDef).isTractor Then
+                    Range("B" & firstBlankRow).Value = defEmail.defectList(curDef).unitNum & " TRUCK"
+                Else
+                    Range("B" & firstBlankRow).Value = defEmail.defectList(curDef).trailerNum & " TRAILER"
+                End If
+            Else ' If not Elite, don't signify truck or trailer
+                Range("B" & firstBlankRow).Value = defEmail.defectList(curDef).unitNum
+            End If
+            
+            ' Fill in the TYPE of defect (lights, engine, Other, etc..)
+            Range("C" & firstBlankRow).Value = defEmail.defectList(curDef).defectType
+            
+            ' Fill in the REMARK (CHECK ENGINE LIGHT, etc..)
+            Range("D" & firstBlankRow).Value = UCase(defEmail.defectList(curDef).remark)
+            
+            ' Fill in the date initiated
+            Range("E" & firstBlankRow).Value = defEmail.dateInitiated ' Split(defEmail.dateInitiated, " ")(0)
+            
+            ' Fill in MAJOR or MINOR designation
+            If defEmail.defectList(curDef).isMajor = True Then
+                With Range("I" & firstBlankRow)
+                    .Value = "MAJOR"
+                    .Interior.ColorIndex = 3
+                End With
+            Else
+                With Range("I" & firstBlankRow)
+                    .Value = "MINOR"
+                    .Interior.ColorIndex = 23
+                End With
+            End If
+            
+            ' One more row, one less defect
+            firstBlankRow = firstBlankRow + 1
+            remainingDefects = remainingDefects - 1
+            
+            defectsAdded = defectsAdded + 1
+            
+        Else
+            Exit Function
+        End If
+            
+    Loop
+    
+    addDefectsToList = defectsAdded
+    
+End Function
+
+
+Function getScanFolderName()
+
+    Dim folderNameCell As String
+    Dim folderNameCellText As String
+    folderNameCell = "D5"
+    folderNameCellText = Range(folderNameCell).Value
+    split1 = Split(folderNameCellText, "[")
+    split2 = Split(split1(1), "]")
+    FolderName = split2(0)
+    
+    getScanFolderName = FolderName
+
+End Function
+
+Function getDestFolderName()
+    
+    Dim dest_folderNameCell As String
+    Dim dest_folderNameCellText As String
+    dest_folderNameCell = "D6"
+    dest_folderNameCellText = Range(dest_folderNameCell).Value
+    dest_split1 = Split(dest_folderNameCellText, "[")
+    dest_split2 = Split(dest_split1(1), "]")
+    DestinationFolderName = dest_split2(0)
+    
+    getDestFolderName = DestinationFolderName
+    
+End Function
+
+
+Sub clearScanFolder()
+
+    Dim OutlookApp As Outlook.Application
+    Dim OutlookNamespace As Namespace
+    
+    Set OutlookApp = New Outlook.Application
+    Set OutlookNamespace = OutlookApp.GetNamespace("MAPI")
+    
+    Dim Folder As MAPIFolder
+    Dim finFolder As MAPIFolder
+
+    FolderName = getScanFolderName
+    DestinationFolderName = getDestFolderName
+    
+    Set Folder = OutlookNamespace.GetDefaultFolder(olFolderInbox).Folders(FolderName)
+    Set finFolder = OutlookNamespace.GetDefaultFolder(olFolderInbox).Folders(DestinationFolderName)
+    
+    If DestinationFolderName <> "" Then
+        copyScanned = True
+        Set finFolder = OutlookNamespace.GetDefaultFolder(olFolderInbox).Folders(DestinationFolderName)
+    Else
+        t = MsgBox("Please provide a name for the Destination Folder (between '[]') before clearing the Scan Folder!", vbCritical + vbOKOnly, "ERROR: No Destination Folder!")
+        Exit Sub
+    End If
+
+    ' This loop copies
+    For i = Folder.Items.Count To 1 Step -1
+    
+        Set mailCopy = Folder.Items.Item(i).Copy
+        mailCopy.Move finFolder
+    
+        Folder.Items.Item(i).Delete
+    Next
+    
+    t = MsgBox("Finished! All items have been transferred: " & Chr(10) & Chr(10) & "'" & FolderName & "' -------> '" & _
+    DestinationFolderName & "'" & Chr(10) & Chr(10) & "Cheers!", Title = "Folder Cleared!")
+
+End Sub

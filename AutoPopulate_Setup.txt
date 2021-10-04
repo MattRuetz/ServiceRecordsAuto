@@ -1,0 +1,83 @@
+Public fromDate As Date
+
+Sub runAutoPop()
+
+    fromDate = promptForFromDate
+    populateFromMail (fromDate)
+
+End Sub
+
+
+Function promptForFromDate() As Date
+    Msg = "Would you like to specify the starting date?" & Chr(10) & _
+            "(Select 'No' to scan from after the most recent defect in the sheet)"
+    Style = vbYesNo
+    Title = "Date Selection Option"
+
+    Response = MsgBox(Msg, Style, Title)
+    
+    Select Case Response
+        Case vbYes
+            
+            Load DateSelectForm
+            DateSelectForm.Show
+            End
+        Case vbNo
+            fromDate = getFromDate
+            Module1.firstBlankRow = getFirstBlankRow
+        
+        Case Default
+            End
+    End Select
+    
+    
+    promptForFromDate = fromDate
+
+End Function
+
+
+
+Function getFromDate() As Date
+
+    ActiveSheet.Range("$B$43:$N$384").AutoFilter Field:=11
+    ActiveSheet.AutoFilter.Sort.SortFields. _
+        Clear
+    ActiveSheet.AutoFilter.Sort.SortFields. _
+        Add2 Key:=Range("E43:E384"), SortOn:=xlSortOnValues, Order:=xlAscending, _
+        DataOption:=xlSortNormal
+    With ActiveSheet.AutoFilter.Sort
+        .Header = xlYes
+        .MatchCase = False
+        .Orientation = xlTopToBottom
+        .SortMethod = xlPinYin
+        .Apply
+    End With
+    
+    curDateRow = 45
+    
+    ' If both DATE and UNIT NUM are empty, this row is considered empty
+    Do While Not IsEmpty(Range("E" & curDateRow)) And curDateRow < 15000
+        curDateRow = curDateRow + 1
+    Loop
+    
+    Module1.firstBlankRow = getFirstBlankRow
+    
+    fromDate = Range("E" & curDateRow - 1).Value
+    
+    getFromDate = fromDate
+    
+End Function
+
+
+Function getFirstBlankRow()
+
+    curDateRow = 45
+    
+    ' If both DATE and UNIT NUM are empty, this row is considered empty
+    Do While (Not IsEmpty(Range("E" & curDateRow)) Or Not IsEmpty(Range("B" & curDateRow))) And curDateRow < 15000
+        curDateRow = curDateRow + 1
+    Loop
+    
+    getFirstBlankRow = curDateRow
+    
+End Function
